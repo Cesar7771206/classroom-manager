@@ -1,0 +1,176 @@
+.container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background-color: var(--bg-primary);
+  position: relative;
+  overflow: hidden;
+}
+
+.bgBlur {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(circle at center, rgba(88, 101, 242, 0.1) 0%, transparent 70%);
+  filter: blur(100px);
+  z-index: 1;
+}
+
+.card {
+  position: relative;
+  z-index: 10;
+  background-color: #1e1f22; /* Discord style dark */
+  width: 100%;
+  max-width: 440px;
+  padding: 2.5rem;
+  border-radius: 1rem;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.logoWrapper {
+  width: 100px;
+  height: 100px;
+  background-color: #2b2d31;
+  border-radius: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+  border: 4px solid #1e1f22;
+}
+
+.icon {
+  color: var(--accent);
+}
+
+.inviteLabel {
+  color: #b5bac1;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+
+.title {
+  color: #ffffff;
+  font-size: 2rem;
+  font-weight: 900;
+  margin-bottom: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.stats {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+  font-size: 0.875rem;
+  color: #b5bac1;
+  font-weight: 500;
+}
+
+.statItem {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.statusDot {
+  width: 10px;
+  height: 10px;
+  background-color: #23a559;
+  border-radius: 50%;
+}
+
+.statusDotGray {
+  width: 10px;
+  height: 10px;
+  background-color: #b5bac1;
+  border-radius: 50%;
+}
+
+.actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.btnJoin {
+  width: 100%;
+  background-color: #5865f2; /* Discord Blurple */
+  color: white;
+  border: none;
+  padding: 0.875rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: background-color 0.2s;
+  text-decoration: none;
+}
+
+.btnJoin:hover {
+  background-color: #4752c4;
+}
+
+.btnReject {
+  width: 100%;
+  padding: 1rem;
+  border-radius: 4px;
+  border: none;
+  background-color: transparent;
+  color: #f23f42;
+  font-weight: 500;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btnReject:hover {
+  text-decoration: underline;
+  background-color: rgba(242, 63, 66, 0.05);
+}
+
+.errorIcon {
+  color: var(--danger);
+  margin-bottom: 1rem;
+}
+
+.alreadyIn {
+  width: 100%;
+  padding: 1.5rem;
+  background-color: rgba(16, 185, 129, 0.05);
+  border: 1px solid rgba(16, 185, 129, 0.1);
+  border-radius: 0.75rem;
+  color: #10b981;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.authRequired {
+  text-align: center;
+  color: #b5bac1;
+  font-size: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  width: 100%;
+}
