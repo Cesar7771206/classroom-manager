@@ -32,7 +32,7 @@ export default async function IndexPage() {
 
         {/* Descripción corta y elegante */}
         <p className={styles.description}>
-          La plataforma definitiva para gestionar tus aulas, alumnos y participaciones de forma ágil y profesional.
+          La plataforma definitiva para gestionar tus aulas, evaluaciones, participaciones y asistencia de forma ágil y profesional.
         </p>
 
         {/* Botones de acción principal */}
@@ -48,7 +48,7 @@ export default async function IndexPage() {
 
       {/* Detalle decorativo inferior */}
       <div className={styles.footer}>
-        © 2024 CLASSROOM MANAGER • QCODE
+        © 2026 CLASSROOM MANAGER • QCODE
       </div>
     </main>
   )

@@ -57,4 +57,4 @@ El proyecto utiliza **Row Level Security (RLS)** de Supabase para garantizar que
 ---
 
 Desarrollado con ❤️ para mejorar la experiencia educativa.
-© 2024 **Classroom Manager • QCODE**
+© 2026 **Classroom Manager • QCODE**

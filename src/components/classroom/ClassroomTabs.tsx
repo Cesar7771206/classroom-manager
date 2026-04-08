@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Users,
@@ -18,25 +18,68 @@ import {
   Plus,
   ChevronRight,
   Info,
-  Search
+  Search,
+  CalendarCheck,
+  Settings,
+  Check,
+  XCircle,
+  Download
 } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { addStudent, deleteStudent, updateStudent } from '@/app/actions/students'
 import { addEvaluation, deleteEvaluation, updateEvaluation } from '@/app/actions/evaluations'
 import { addParticipation, deleteParticipation, updateParticipation } from '@/app/actions/participation'
+import { saveAttendanceConfig, saveAttendanceRecords } from '@/app/actions/attendance'
 import { TagSelect, TagBadge } from './TagSelect'
 import { SearchableSelect } from './SearchableSelect'
 
-type TabType = 'resumen' | 'estudiantes' | 'evaluaciones' | 'participacion'
+type TabType = 'resumen' | 'estudiantes' | 'evaluaciones' | 'participacion' | 'asistencia'
+
+function CircularProgress({ percentage, size = 60 }: { percentage: number, size?: number }) {
+  const radius = (size / 2) - 5
+  const circumference = radius * 2 * Math.PI
+  const offset = circumference - (percentage / 100) * circumference
+
+  return (
+    <div style={{ position: 'relative', width: size, height: size, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+        <circle
+          stroke="rgba(255,255,255,0.05)"
+          strokeWidth="4"
+          fill="transparent"
+          r={radius}
+          cx={size / 2}
+          cy={size / 2}
+        />
+        <circle
+          stroke={percentage >= 90 ? '#10b981' : percentage >= 50 ? '#f59e0b' : '#ef4444'}
+          strokeWidth="4"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          fill="transparent"
+          r={radius}
+          cx={size / 2}
+          cy={size / 2}
+          style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+        />
+      </svg>
+      <span style={{ position: 'absolute', fontSize: '0.75rem', fontWeight: 800 }}>{percentage}%</span>
+    </div>
+  )
+}
 
 interface ClassroomTabsProps {
   classroom: any
   students: any[]
   evaluations: any[]
   participationRecords: any[]
+  attendanceConfig: any | null
+  attendanceRecords: any[]
   role: string
 }
 
-export function ClassroomTabs({ classroom, students, evaluations, participationRecords, role }: ClassroomTabsProps) {
+export function ClassroomTabs({ classroom, students, evaluations, participationRecords, attendanceConfig, attendanceRecords, role }: ClassroomTabsProps) {
   const [activeTab, setActiveTab] = useState<TabType>('estudiantes')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMSG, setErrorMSG] = useState('')
@@ -51,6 +94,103 @@ export function ClassroomTabs({ classroom, students, evaluations, participationR
   const [editingPart, setEditingPart] = useState<any | null>(null)
 
   const motivosExistentes = useMemo(() => Array.from(new Set(participationRecords.map(r => r.notes).filter(Boolean))), [participationRecords])
+
+  // === ASISTENCIA ===
+  // Helper: calcula el estado de asistencia a partir de los datos del server (props)
+  const computeAttendance = (week: number, session: number) => {
+    const state: Record<string, boolean> = {}
+    const existingRecords = attendanceRecords.filter(
+      (r: any) => r.week_number === week && r.session_number === session
+    )
+
+    if (existingRecords.length > 0) {
+      existingRecords.forEach((r: any) => {
+        state[r.student_id] = r.is_present
+      })
+      // Estudiantes nuevos sin registro → presentes
+      students.forEach(s => {
+        if (!(s.id in state)) state[s.id] = true
+      })
+    } else {
+      // Sin registros → todos presentes por defecto
+      students.forEach(s => { state[s.id] = true })
+    }
+    return state
+  }
+
+  const [selectedWeek, setSelectedWeek] = useState(1)
+  const [selectedSession, setSelectedSession] = useState(1)
+  // Inicializar directamente desde los datos del server (Semana 1, Sesión 1)
+  const [attendanceState, setAttendanceState] = useState<Record<string, boolean>>(
+    () => attendanceConfig ? computeAttendance(1, 1) : {}
+  )
+  const [savingAttendance, setSavingAttendance] = useState(false)
+  const [attendanceMsg, setAttendanceMsg] = useState('')
+
+  // Recalcular asistencia al cambiar de semana/sesión
+  const handleWeekChange = (week: number) => {
+    setSelectedWeek(week)
+    setAttendanceMsg('')
+    setAttendanceState(computeAttendance(week, selectedSession))
+  }
+
+  const handleSessionChange = (session: number) => {
+    setSelectedSession(session)
+    setAttendanceMsg('')
+    setAttendanceState(computeAttendance(selectedWeek, session))
+  }
+
+  // Toggle asistencia de un estudiante
+  const toggleAttendance = (studentId: string) => {
+    setAttendanceState(prev => ({
+      ...prev,
+      [studentId]: !prev[studentId]
+    }))
+  }
+
+  // Guardar asistencia de la sesión actual
+  const handleSaveAttendance = async () => {
+    setSavingAttendance(true)
+    setAttendanceMsg('')
+
+    const records = Object.entries(attendanceState).map(([student_id, is_present]) => ({
+      student_id,
+      is_present
+    }))
+
+    const result = await saveAttendanceRecords(
+      classroom.id,
+      selectedWeek,
+      selectedSession,
+      records
+    )
+
+    if (result.success) {
+      setAttendanceMsg('✅ Asistencia guardada correctamente.')
+    } else {
+      setAttendanceMsg(`❌ ${result.error}`)
+    }
+
+    setSavingAttendance(false)
+  }
+
+  // Guardar config de asistencia
+  const handleSaveConfig = async (formData: FormData) => {
+    setIsSubmitting(true)
+    setErrorMSG('')
+    const result = await saveAttendanceConfig(formData)
+    if (!result.success) {
+      setErrorMSG(result.error || 'Error al guardar configuración.')
+    }
+    setIsSubmitting(false)
+  }
+
+  // Estadísticas de asistencia por sesión
+  const attendanceStats = useMemo(() => {
+    const presentCount = Object.values(attendanceState).filter(v => v).length
+    const absentCount = Object.values(attendanceState).filter(v => !v).length
+    return { presentCount, absentCount, total: presentCount + absentCount }
+  }, [attendanceState])
 
   // Filtrado de listas
   const filteredStudents = useMemo(() => {
@@ -163,38 +303,80 @@ export function ClassroomTabs({ classroom, students, evaluations, participationR
     setIsSubmitting(false)
   }
 
-  // ==== LOGICA DEL RESUMEN (CALCULO DE PUNTOS) ====
+  // ==== LOGICA DEL RESUMEN (CALCULO DE PUNTOS, NOTAS POR EVAL Y ASISTENCIA) ====
   const summaryData = useMemo(() => {
-    // 1. Iniciamos con todos los estudiantes en 0
-    const totals: Record<string, { student: any; points: number; pointsCM: number }> = {}
+    // 1. Iniciamos con todos los estudiantes
+    const totals: Record<string, {
+      student: any;
+      pointsCM: number;
+      presentCount: number;
+      evalGrades: Record<string, { pointsCM: number; realPoints: number }>
+    }> = {}
     students.forEach(s => {
-      totals[s.id] = { student: s, points: 0, pointsCM: 0 }
+      totals[s.id] = { student: s, pointsCM: 0, presentCount: 0, evalGrades: {} }
     })
 
-    // 2. Sumamos los puntos de las participaciones
+    // 2. Sumamos puntos CM por participación Y agrupamos por evaluación
     participationRecords.forEach(rec => {
       if (totals[rec.student_id]) {
-        const rawPoints = Number(rec.points || 0)
-        // Obtenemos la tasa de conversión definida para esta evaluación (default 1)
-        const conversion = Number((rec.evaluation as any)?.points_worth || 1)
+        const pts = Number(rec.points || 0)
+        totals[rec.student_id].pointsCM += pts
 
-        // Sumamos Puntos CM (raw)
-        totals[rec.student_id].pointsCM += rawPoints
-
-        // Sumamos Puntos EVAL (según la conversión)
-        totals[rec.student_id].points += (rawPoints / conversion)
+        // Agrupar por evaluación para desglose
+        const evalId = rec.evaluation_id
+        if (evalId) {
+          if (!totals[rec.student_id].evalGrades[evalId]) {
+            totals[rec.student_id].evalGrades[evalId] = { pointsCM: 0, realPoints: 0 }
+          }
+          totals[rec.student_id].evalGrades[evalId].pointsCM += pts
+        }
       }
     })
 
-    // 3. Convertimos a arreglo, formateamos y ordenamos por Puntos de Evaluación (reales)
-    const data = Object.values(totals).map(item => ({
-      ...item,
-      points: Number(item.points.toFixed(2)), // Redondeo para evitar errores de coma flotante
-      pointsCM: Number(item.pointsCM.toFixed(1))
-    }))
+    // 2.5 Calculamos puntos reales por evaluación
+    // Creamos un mapa rápido de evaluaciones para lookup
+    const evalMap: Record<string, any> = {}
+    ;(evaluations || []).forEach(e => { evalMap[e.id] = e })
 
-    return data.sort((a, b) => b.points - a.points)
-  }, [students, participationRecords])
+    Object.values(totals).forEach(item => {
+      Object.keys(item.evalGrades).forEach(evalId => {
+        const evalDef = evalMap[evalId]
+        const pointsWorth = evalDef?.points_worth || 2
+        item.evalGrades[evalId].realPoints = Number(
+          (item.evalGrades[evalId].pointsCM / pointsWorth).toFixed(2)
+        )
+      })
+    })
+
+    // 3. Calculamos asistencia
+    const totalCourseSessions = attendanceConfig 
+      ? (attendanceConfig.weeks_count * attendanceConfig.sessions_per_week)
+      : 0
+
+    // Contamos inasistencias (faltas) por estudiante
+    attendanceRecords.forEach(rec => {
+      if (totals[rec.student_id] && !rec.is_present) {
+        totals[rec.student_id].presentCount += 1
+      }
+    })
+
+    // 4. Convertimos a arreglo y calculamos porcentaje
+    const data = Object.values(totals).map(item => {
+      const absentCount = item.presentCount
+      const attendancePercentage = totalCourseSessions > 0 
+        ? Math.round(((totalCourseSessions - absentCount) / totalCourseSessions) * 100)
+        : 100
+
+      return {
+        ...item,
+        attendancePercentage: Math.max(0, attendancePercentage),
+        pointsCM: Number(item.pointsCM.toFixed(1))
+      }
+    })
+
+    // Ordenamos por Puntaje CM para el podio
+    return data.sort((a, b) => b.pointsCM - a.pointsCM)
+  }, [students, evaluations, participationRecords, attendanceRecords, attendanceConfig])
 
   // Componentes memorizados para las filas de las tablas
   const StudentRow = useMemo(() => ({ student, index }: { student: any, index: number }) => (
@@ -269,13 +451,14 @@ export function ClassroomTabs({ classroom, students, evaluations, participationR
         width: 'fit-content',
         border: '1px solid var(--border-muted)'
       }}>
-        {(['resumen', 'estudiantes', 'evaluaciones', 'participacion'] as TabType[]).map((tab) => {
+        {(['resumen', 'estudiantes', 'evaluaciones', 'participacion', 'asistencia'] as TabType[]).map((tab) => {
           const isActive = activeTab === tab
           const icons = {
             resumen: <BarChart3 size={18} />,
             estudiantes: <Users size={18} />,
             evaluaciones: <ClipboardCheck size={18} />,
-            participacion: <MessageSquarePlus size={18} />
+            participacion: <MessageSquarePlus size={18} />,
+            asistencia: <CalendarCheck size={18} />
           }
 
           return (
@@ -639,15 +822,16 @@ export function ClassroomTabs({ classroom, students, evaluations, participationR
                       <th style={{ padding: '1rem' }}>Evaluación</th>
                       <th style={{ padding: '1rem' }}>Motivo</th>
                       <th style={{ padding: '1rem', textAlign: 'right' }}>Puntos CM</th>
+                      <th style={{ padding: '1rem', textAlign: 'right' }}>Puntos Reales</th>
                       <th style={{ padding: '1rem', textAlign: 'right' }}>Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
                     {participationRecords.length === 0 ? (
-                      <tr><td colSpan={5} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Sin registros.</td></tr>
+                      <tr><td colSpan={6} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Sin registros.</td></tr>
                     ) : (
                       participationRecords.map((rec) => (
-                        <tr key={rec.id} style={{
+                         <tr key={rec.id} style={{
                           borderBottom: '1px solid rgba(255,255,255,0.05)',
                           background: editingPart?.id === rec.id ? 'rgba(234, 179, 8, 0.05)' : 'transparent'
                         }}>
@@ -663,6 +847,15 @@ export function ClassroomTabs({ classroom, students, evaluations, participationR
                           <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 600 }}>
                             <span style={{ color: 'var(--text-primary)' }}>+{rec.points}</span>
                             <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>CM</span>
+                          </td>
+                          <td style={{ padding: '1rem', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--accent)', fontWeight: 800 }}>
+                                <span>+{(rec.points / (rec.evaluation?.points_worth || 2)).toFixed(2)}</span>
+                                <Trophy size={12} />
+                              </div>
+                              <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>pts reales</span>
+                            </div>
                           </td>
                           <td style={{ padding: '1rem', textAlign: 'right' }}>
                             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center' }}>
@@ -683,16 +876,357 @@ export function ClassroomTabs({ classroom, students, evaluations, participationR
             </div>
           )}
 
+          {/* TAB: ASISTENCIA */}
+          {activeTab === 'asistencia' && (
+            <div>
+              {/* Si NO hay config, mostrar formulario de configuración */}
+              {!attendanceConfig ? (
+                <div>
+                  <div style={{ textAlign: 'center', padding: '2rem' }}>
+                    <Settings size={48} style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }} />
+                    <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>Configurar Asistencia</h2>
+                    <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', maxWidth: '400px', margin: '0 auto 2rem' }}>
+                      Para comenzar a registrar asistencia, define cuántas semanas y sesiones por semana tiene este curso.
+                    </p>
+                  </div>
+
+                  <form
+                    action={handleSaveConfig}
+                    style={{
+                      maxWidth: '400px',
+                      margin: '0 auto',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '1.5rem',
+                      background: 'rgba(255,255,255,0.03)',
+                      padding: '2rem',
+                      borderRadius: 'var(--radius-lg)',
+                      border: '1px solid var(--border-muted)'
+                    }}
+                  >
+                    <input type="hidden" name="classroom_id" value={classroom.id} />
+
+                    <div>
+                      <label className="label-text" htmlFor="weeks_count">¿Cuántas semanas tiene el curso?</label>
+                      <input
+                        type="number"
+                        id="weeks_count"
+                        name="weeks_count"
+                        className="input-field"
+                        placeholder="Ej: 16"
+                        min={1}
+                        max={30}
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="label-text" htmlFor="sessions_per_week">¿Cuántas sesiones por semana?</label>
+                      <input
+                        type="number"
+                        id="sessions_per_week"
+                        name="sessions_per_week"
+                        className="input-field"
+                        placeholder="Ej: 2"
+                        min={1}
+                        max={7}
+                        required
+                      />
+                    </div>
+
+                    {errorMSG && <p style={{ color: 'var(--danger)' }}>{errorMSG}</p>}
+
+                    <button type="submit" className="btn btn-primary" disabled={isSubmitting} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                      {isSubmitting ? '...' : <><Save size={18} /> Guardar Configuración</>}
+                    </button>
+                  </form>
+                </div>
+              ) : (
+                /* Si SÍ hay config, mostrar la vista de asistencia */
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                    <div>
+                      <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Registro de Asistencia</h2>
+                      <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                        {attendanceConfig.weeks_count} semanas · {attendanceConfig.sessions_per_week} sesiones/semana
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Selectores de Semana y Sesión */}
+                  <div style={{
+                    display: 'flex',
+                    gap: '1rem',
+                    marginBottom: '1.5rem',
+                    flexWrap: 'wrap',
+                    alignItems: 'end'
+                  }}>
+                    <div style={{ flex: 1, minWidth: '200px' }}>
+                      <label className="label-text">Semana</label>
+                      <select
+                        className="input-field"
+                        value={selectedWeek}
+                        onChange={(e) => handleWeekChange(Number(e.target.value))}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        {Array.from({ length: attendanceConfig.weeks_count }, (_, i) => i + 1).map(w => (
+                          <option key={w} value={w}>Semana {w}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: '200px' }}>
+                      <label className="label-text">Sesión</label>
+                      <select
+                        className="input-field"
+                        value={selectedSession}
+                        onChange={(e) => handleSessionChange(Number(e.target.value))}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        {Array.from({ length: attendanceConfig.sessions_per_week }, (_, i) => i + 1).map(s => (
+                          <option key={s} value={s}>Sesión {s}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                  </div>
+
+                  {/* Estadísticas rápidas */}
+                  <div style={{
+                      display: 'flex',
+                      gap: '1rem',
+                      marginBottom: '1.5rem'
+                    }}>
+                      <div style={{
+                        flex: 1,
+                        padding: '1rem',
+                        background: 'rgba(16, 185, 129, 0.08)',
+                        border: '1px solid rgba(16, 185, 129, 0.2)',
+                        borderRadius: 'var(--radius-md)',
+                        textAlign: 'center'
+                      }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#10b981' }}>{attendanceStats.presentCount}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Presentes</div>
+                      </div>
+                      <div style={{
+                        flex: 1,
+                        padding: '1rem',
+                        background: 'rgba(239, 68, 68, 0.08)',
+                        border: '1px solid rgba(239, 68, 68, 0.2)',
+                        borderRadius: 'var(--radius-md)',
+                        textAlign: 'center'
+                      }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#ef4444' }}>{attendanceStats.absentCount}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Ausentes</div>
+                      </div>
+                      <div style={{
+                        flex: 1,
+                        padding: '1rem',
+                        background: 'rgba(255,255,255,0.03)',
+                        border: '1px solid var(--border-muted)',
+                        borderRadius: 'var(--radius-md)',
+                        textAlign: 'center'
+                      }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>{attendanceStats.total}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Total</div>
+                      </div>
+                    </div>
+
+                  {/* Tabla de asistencia */}
+                  <div style={{ background: 'transparent', border: '1px solid var(--border-muted)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                          <thead style={{ background: 'rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                            <tr>
+                              <th style={{ padding: '1rem', width: '60px' }}>#</th>
+                              <th style={{ padding: '1rem' }}>Estudiante</th>
+                              <th style={{ padding: '1rem', textAlign: 'center', width: '120px' }}>Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {students.length === 0 ? (
+                              <tr>
+                                <td colSpan={3} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                  No hay estudiantes registrados.
+                                </td>
+                              </tr>
+                            ) : (
+                              students.map((student, index) => {
+                                const isPresent = attendanceState[student.id] ?? true
+                                return (
+                                  <tr
+                                    key={student.id}
+                                    onClick={() => toggleAttendance(student.id)}
+                                    style={{
+                                      borderBottom: '1px solid rgba(255,255,255,0.05)',
+                                      cursor: 'pointer',
+                                      background: isPresent ? 'transparent' : 'rgba(239, 68, 68, 0.05)',
+                                      transition: 'background 0.2s ease'
+                                    }}
+                                  >
+                                    <td style={{ padding: '1rem', color: 'var(--text-secondary)' }}>{index + 1}</td>
+                                    <td style={{
+                                      padding: '1rem',
+                                      fontWeight: 500,
+                                      textDecoration: isPresent ? 'none' : 'line-through',
+                                      opacity: isPresent ? 1 : 0.5,
+                                      transition: 'all 0.2s ease'
+                                    }}>
+                                      {student.last_name}, {student.first_name}
+                                    </td>
+                                    <td style={{ padding: '1rem', textAlign: 'center' }}>
+                                      <div style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        padding: '0.3rem 0.75rem',
+                                        borderRadius: '9999px',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 600,
+                                        background: isPresent ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                                        color: isPresent ? '#10b981' : '#ef4444',
+                                        transition: 'all 0.2s ease'
+                                      }}>
+                                        {isPresent ? <Check size={14} /> : <XCircle size={14} />}
+                                        {isPresent ? 'Presente' : 'Ausente'}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                  </div>
+
+                  {/* Mensaje de feedback */}
+                  {attendanceMsg && (
+                    <p style={{
+                      marginTop: '1rem',
+                      padding: '0.75rem 1rem',
+                      borderRadius: 'var(--radius-md)',
+                      background: attendanceMsg.startsWith('✅') ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                      color: attendanceMsg.startsWith('✅') ? '#10b981' : '#ef4444',
+                      fontSize: '0.9rem'
+                    }}>
+                      {attendanceMsg}
+                    </p>
+                  )}
+
+                  {/* Botón de guardar */}
+                  <button
+                    onClick={handleSaveAttendance}
+                    className="btn btn-primary"
+                    disabled={savingAttendance}
+                    style={{
+                      marginTop: '1.5rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      width: '100%',
+                      justifyContent: 'center',
+                      padding: '0.75rem'
+                    }}
+                  >
+                    {savingAttendance ? 'Guardando...' : <><Save size={18} /> Guardar Asistencia — Semana {selectedWeek}, Sesión {selectedSession}</>}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* TAB: RESUMEN (FINAL) */}
           {activeTab === 'resumen' && (
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Resumen General de Puntos</h2>
-                <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Alumnos: {students.length}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                <div>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Resumen Académico</h2>
+                  <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Alumnos: {students.length}</span>
+                </div>
+                <button
+                  onClick={() => {
+                    // 1. Construir los headers
+                    const evalList = evaluations || []
+                    const headers = [
+                      '#',
+                      'Estudiante',
+                      ...evalList.map(ev => `${ev.name} (Nota Real)`),
+                      ...evalList.map(ev => `${ev.name} (Pts CM)`),
+                      'Total CM',
+                      'Asistencia %'
+                    ]
+
+                    // 2. Construir las filas con datos
+                    const rows = summaryData.map((item, index) => {
+                      const realGrades = evalList.map(ev => {
+                        const grade = item.evalGrades[ev.id]
+                        return grade && grade.pointsCM > 0 ? grade.realPoints : 0
+                      })
+                      const cmGrades = evalList.map(ev => {
+                        const grade = item.evalGrades[ev.id]
+                        return grade ? grade.pointsCM : 0
+                      })
+                      return [
+                        index + 1,
+                        `${item.student.last_name}, ${item.student.first_name}`,
+                        ...realGrades,
+                        ...cmGrades,
+                        item.pointsCM,
+                        item.attendancePercentage
+                      ]
+                    })
+
+                    // 3. Crear el worksheet y workbook
+                    const wsData = [headers, ...rows]
+                    const ws = XLSX.utils.aoa_to_sheet(wsData)
+
+                    // Ajustar ancho de columnas automáticamente
+                    const colWidths = headers.map((h, i) => {
+                      const maxLen = Math.max(
+                        h.length,
+                        ...rows.map(r => String(r[i]).length)
+                      )
+                      return { wch: Math.min(maxLen + 2, 30) }
+                    })
+                    ws['!cols'] = colWidths
+
+                    const wb = XLSX.utils.book_new()
+                    XLSX.utils.book_append_sheet(wb, ws, 'Resumen')
+
+                    // 4. Descargar el archivo
+                    const fileName = `${classroom.name.replace(/\s+/g, '_')}_Resumen.xlsx`
+                    XLSX.writeFile(wb, fileName)
+                  }}
+                  className="btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 1.25rem',
+                    background: 'rgba(16, 185, 129, 0.12)',
+                    border: '1px solid rgba(16, 185, 129, 0.3)',
+                    color: '#10b981',
+                    borderRadius: 'var(--radius-md)',
+                    fontWeight: 600,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'rgba(16, 185, 129, 0.2)'
+                    e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.5)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'rgba(16, 185, 129, 0.12)'
+                    e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.3)'
+                  }}
+                >
+                  <Download size={16} />
+                  Exportar Excel
+                </button>
               </div>
 
               {/* TOP 3 PODIUM */}
-              {summaryData.length > 0 && summaryData[0].points > 0 && (
+              {summaryData.length > 0 && (summaryData[0].pointsCM > 0 || summaryData[0].attendancePercentage > 0) && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
                   {summaryData.slice(0, 3).map((item, index) => (
                     <div key={item.student.id} style={{
@@ -700,7 +1234,10 @@ export function ClassroomTabs({ classroom, students, evaluations, participationR
                       border: index === 0 ? '1px solid rgba(99, 102, 241, 0.4)' : '1px solid rgba(255,255,255,0.1)',
                       padding: '1.5rem',
                       borderRadius: 'var(--radius-lg)',
-                      textAlign: 'center'
+                      textAlign: 'center',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center'
                     }}>
                       <span style={{ fontSize: '2rem', display: 'block', marginBottom: '0.5rem' }}>
                         {index === 0 ? '🏆' : index === 1 ? '🥈' : '🥉'}
@@ -708,40 +1245,92 @@ export function ClassroomTabs({ classroom, students, evaluations, participationR
                       <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>{item.student.first_name}</h3>
                       <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: '1rem' }}>{item.student.last_name}</p>
 
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent)' }}>{item.points} pts</div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Puntos de Evaluación</div>
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)', marginTop: '0.5rem' }}>{item.pointsCM} <small style={{ color: 'var(--text-secondary)' }}>CM</small></div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', justifyContent: 'center' }}>
+                         <div style={{ textAlign: 'center' }}>
+                           <CircularProgress percentage={item.attendancePercentage} size={50} />
+                           <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '0.2rem' }}>Asistencia</span>
+                         </div>
+                         <div style={{ textAlign: 'center' }}>
+                           <div style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--text-primary)' }}>{item.pointsCM}</div>
+                           <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Puntos CM</span>
+                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
 
-              {/* TABLA GENERAL RECAPITULATORIA */}
-              <div style={{ background: 'transparent', border: '1px solid var(--border-muted)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              {/* TABLA GENERAL RECAPITULATORIA CON NOTAS POR EVALUACIÓN */}
+              <div style={{ background: 'transparent', border: '1px solid var(--border-muted)', borderRadius: 'var(--radius-md)', overflow: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: evaluations && evaluations.length > 3 ? `${600 + evaluations.length * 120}px` : 'auto' }}>
                   <thead style={{ background: 'rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                     <tr>
-                      <th style={{ padding: '1rem', width: '80px' }}>Rank</th>
-                      <th style={{ padding: '1rem' }}>Estudiante</th>
+                      <th style={{ padding: '1rem', width: '60px', position: 'sticky', left: 0, background: 'var(--bg-primary)', zIndex: 1 }}>Rank</th>
+                      <th style={{ padding: '1rem', position: 'sticky', left: '60px', background: 'var(--bg-primary)', zIndex: 1, minWidth: '180px' }}>Estudiante</th>
+                      {(evaluations || []).map(ev => (
+                        <th key={ev.id} style={{
+                          padding: '0.75rem 1rem',
+                          textAlign: 'center',
+                          minWidth: '110px',
+                          borderLeft: '1px solid rgba(255,255,255,0.05)'
+                        }}>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 700 }}>{ev.name}</div>
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                            {ev.points_worth} CM = 1 pt
+                          </div>
+                        </th>
+                      ))}
+                      <th style={{ padding: '1rem', textAlign: 'center', borderLeft: '1px solid rgba(255,255,255,0.1)' }}>Asistencia</th>
                       <th style={{ padding: '1rem', textAlign: 'right' }}>Total CM</th>
-                      <th style={{ padding: '1rem', textAlign: 'right' }}>Puntos de Evaluación</th>
                     </tr>
                   </thead>
                   <tbody>
                     {summaryData.length === 0 ? (
-                      <tr><td colSpan={4} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Sin registros.</td></tr>
+                      <tr><td colSpan={4 + (evaluations?.length || 0)} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Sin registros.</td></tr>
                     ) : (
                       summaryData.map((item, index) => (
                         <tr key={item.student.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                          <td style={{ padding: '1rem', color: 'var(--text-secondary)', fontWeight: 600 }}>#{index + 1}</td>
-                          <td style={{ padding: '1rem' }}>{item.student.last_name}, {item.student.first_name}</td>
-                          <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
-                            {item.pointsCM}
+                          <td style={{ padding: '1rem', color: 'var(--text-secondary)', fontWeight: 600, position: 'sticky', left: 0, background: 'var(--bg-primary)', zIndex: 1 }}>#{index + 1}</td>
+                          <td style={{ padding: '1rem', position: 'sticky', left: '60px', background: 'var(--bg-primary)', zIndex: 1 }}>{item.student.last_name}, {item.student.first_name}</td>
+                          {(evaluations || []).map(ev => {
+                            const grade = item.evalGrades[ev.id]
+                            const hasGrade = grade && grade.pointsCM > 0
+                            return (
+                              <td key={ev.id} style={{
+                                padding: '0.75rem 1rem',
+                                textAlign: 'center',
+                                borderLeft: '1px solid rgba(255,255,255,0.05)'
+                              }}>
+                                {hasGrade ? (
+                                  <div>
+                                    <div style={{
+                                      fontSize: '1rem',
+                                      fontWeight: 800,
+                                      color: 'var(--accent)'
+                                    }}>
+                                      {grade.realPoints.toFixed(2)}
+                                    </div>
+                                    <div style={{
+                                      fontSize: '0.6rem',
+                                      color: 'var(--text-secondary)',
+                                      marginTop: '2px'
+                                    }}>
+                                      {grade.pointsCM} CM
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span style={{ color: 'rgba(255,255,255,0.15)', fontSize: '0.85rem' }}>—</span>
+                                )}
+                              </td>
+                            )
+                          })}
+                          <td style={{ padding: '1rem', textAlign: 'center', borderLeft: '1px solid rgba(255,255,255,0.1)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'center' }}>
+                              <CircularProgress percentage={item.attendancePercentage} size={40} />
+                            </div>
                           </td>
-                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 700, color: item.points > 0 ? 'var(--accent)' : 'var(--text-secondary)' }}>
-                            {item.points}
+                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 800 }}>
+                            {item.pointsCM}
                           </td>
                         </tr>
                       ))

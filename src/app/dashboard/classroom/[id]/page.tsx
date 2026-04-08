@@ -40,7 +40,7 @@ export default async function ClassroomDetailPage({ params }: { params: Promise<
   }
 
   // Ejecutar el resto de las consultas en paralelo para ganar velocidad
-  const [studentsRes, evaluationsRes, participationRes] = await Promise.all([
+  const [studentsRes, evaluationsRes, participationRes, attendanceConfigRes, attendanceRecordsRes] = await Promise.all([
     supabase
       .from('students')
       .select('*')
@@ -55,16 +55,27 @@ export default async function ClassroomDetailPage({ params }: { params: Promise<
       .from('participation_records')
       .select(`
         *,
-        student:students(first_name, last_name),
+        student:students!inner(first_name, last_name, classroom_id),
         evaluation:evaluations(name, points_worth)
       `)
-      .order('created_at', { ascending: false })
+      .eq('student.classroom_id', id)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('attendance_config')
+      .select('*')
+      .eq('classroom_id', id)
+      .single(),
+    supabase
+      .from('attendance_records')
+      .select('*')
+      .eq('classroom_id', id)
   ])
 
   const students = studentsRes.data
   const evaluations = evaluationsRes.data
   const participationRecords = participationRes.data || []
-  // Nota: El RLS de participation_records filtrará por los alumnos que pertenezcan a las aulas del usuario
+  const attendanceConfig = attendanceConfigRes.data // puede ser null si no se ha configurado
+  const attendanceRecords = attendanceRecordsRes.data || []
 
   return (
     <div style={{ minHeight: '100vh', padding: '2rem 1.5rem', maxWidth: '1200px', margin: '0 auto' }}>
@@ -199,6 +210,8 @@ export default async function ClassroomDetailPage({ params }: { params: Promise<
         students={students || []}
         evaluations={evaluations || []}
         participationRecords={participationRecords || []}
+        attendanceConfig={attendanceConfig}
+        attendanceRecords={attendanceRecords}
         role={profile.role}
       />
 
